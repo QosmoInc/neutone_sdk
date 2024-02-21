@@ -7,6 +7,7 @@ import click
 import torch
 from torch.autograd.profiler import record_function
 from neutone_sdk import constants
+from neutone_sdk.exceptions import INFERENCE_MODE_EXCEPTION
 from neutone_sdk.sqw import SampleQueueWrapper
 from neutone_sdk.utils import load_neutone_model, model_to_torchscript
 import numpy as np
@@ -90,44 +91,47 @@ def benchmark_speed_(
     np.set_printoptions(precision=3)
     torch.set_num_threads(num_threads)
     torch.set_num_interop_threads(num_interop_threads)
-    with torch.no_grad():
-        m, _ = load_neutone_model(model_file)
-        log.info(
-            f"Running benchmark for buffer sizes {buffer_size} and sample rates {sample_rate}. Outliers will be removed from the calculation of mean and std and displayed separately if existing."
-        )
-        for sr, bs in itertools.product(sample_rate, buffer_size):
-            m.set_daw_sample_rate_and_buffer_size(sr, bs)
-            for _ in range(n_iters):  # Warmup
-                m.forward(torch.rand((daw_n_ch, bs)))
-            m.reset()
-
-            # Pregenerate random buffers to more accurately benchmark the model itself
-            def get_random_buffer_generator():
-                buffers = torch.rand(100, daw_n_ch, bs)
-                i = 0
-
-                def return_next_random_buffer():
-                    nonlocal i
-                    i = (i + 1) % 100
-                    return buffers[i]
-
-                return return_next_random_buffer
-
-            rbg = get_random_buffer_generator()
-
-            durations = np.array(
-                timeit.repeat(lambda: m.forward(rbg()), repeat=repeat, number=n_iters)
-            )
-            m.reset()
-            mean, std = np.mean(durations), np.std(durations)
-            outlier_mask = np.abs(durations - mean) > 2 * std
-            outliers = durations[outlier_mask]
-            # Remove outliers from general benchmark
-            durations = durations[~outlier_mask]
-            mean, std = np.mean(durations), np.std(durations)
+    try:
+        with torch.inference_mode():
+            m, _ = load_neutone_model(model_file)
             log.info(
-                f"Sample rate: {sr: 6} | Buffer size: {bs: 6} | duration: {mean: 6.3f}±{std:.3f} | 1/RTF: {bs/(mean/n_iters*sr): 6.3f} | Outliers: {outliers[:3]}"
+                f"Running benchmark for buffer sizes {buffer_size} and sample rates {sample_rate}. Outliers will be removed from the calculation of mean and std and displayed separately if existing."
             )
+            for sr, bs in itertools.product(sample_rate, buffer_size):
+                m.set_daw_sample_rate_and_buffer_size(sr, bs)
+                for _ in range(n_iters):  # Warmup
+                    m.forward(torch.rand((daw_n_ch, bs)))
+                m.reset()
+
+                # Pregenerate random buffers to more accurately benchmark the model itself
+                def get_random_buffer_generator():
+                    buffers = torch.rand(100, daw_n_ch, bs)
+                    i = 0
+
+                    def return_next_random_buffer():
+                        nonlocal i
+                        i = (i + 1) % 100
+                        return buffers[i]
+
+                    return return_next_random_buffer
+
+                rbg = get_random_buffer_generator()
+
+                durations = np.array(
+                    timeit.repeat(lambda: m.forward(rbg()), repeat=repeat, number=n_iters)
+                )
+                m.reset()
+                mean, std = np.mean(durations), np.std(durations)
+                outlier_mask = np.abs(durations - mean) > 2 * std
+                outliers = durations[outlier_mask]
+                # Remove outliers from general benchmark
+                durations = durations[~outlier_mask]
+                mean, std = np.mean(durations), np.std(durations)
+                log.info(
+                    f"Sample rate: {sr: 6} | Buffer size: {bs: 6} | duration: {mean: 6.3f}±{std:.3f} | 1/RTF: {bs/(mean/n_iters*sr): 6.3f} | Outliers: {outliers[:3]}"
+                )
+    except RuntimeError as e:
+        INFERENCE_MODE_EXCEPTION.raise_if_triggered(e)
 
 
 @cli.command()
@@ -163,7 +167,7 @@ def benchmark_latency_(
     log.info(f"Native buffer sizes: {nbs[:10]}, Native sample rates: {nsr[:10]}")
     if len(nbs) > 10 or len(nsr) > 10:
         log.info(f"Showing only the first 10 values in case there are more.")
-    with torch.no_grad():
+    with torch.inference_mode():
         delays = []
         for sr, bs in itertools.product(sample_rate, buffer_size):
             m.set_daw_sample_rate_and_buffer_size(sr, bs)
@@ -212,34 +216,36 @@ def profile_sqw(
         sqw.prepare_for_inference()
     if convert_to_torchscript:
         log.info("Converting to TorchScript")
-        with torch.no_grad():
+        with torch.inference_mode():
             sqw = model_to_torchscript(sqw, freeze=False, optimize=False)
 
-    with torch.inference_mode():
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU],
-            with_stack=True,
-            profile_memory=True,
-            record_shapes=False,
-        ) as prof:
-            with record_function("forward"):
-                for audio_buff, param_buff in tqdm(zip(audio_buffers, param_buffers)):
-                    out_buff = sqw.forward(audio_buff, param_buff)
+    try:
+        with torch.inference_mode():
+            with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU],
+                with_stack=True,
+                profile_memory=True,
+                record_shapes=False,
+            ) as prof:
+                with record_function("forward"):
+                    for audio_buff, param_buff in tqdm(zip(audio_buffers, param_buffers)):
+                        out_buff = sqw.forward(audio_buff, param_buff)
 
-        log.info("Displaying Total CPU Time")
-        log.info(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-        # log.info(prof.key_averages(group_by_stack_n=5).table(sort_by="cpu_time_total", row_limit=10))
-        log.info("Displaying CPU Memory Usage")
-        log.info(
-            prof.key_averages().table(sort_by="self_cpu_memory_usage", row_limit=10)
-        )
-        log.info("Displaying Grouped CPU Memory Usage")
-        log.info(
-            prof.key_averages(group_by_stack_n=5).table(
-                sort_by="self_cpu_memory_usage", row_limit=5
+            log.info("Displaying Total CPU Time")
+            log.info(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+            # log.info(prof.key_averages(group_by_stack_n=5).table(sort_by="cpu_time_total", row_limit=10))
+            log.info("Displaying CPU Memory Usage")
+            log.info(
+                prof.key_averages().table(sort_by="self_cpu_memory_usage", row_limit=10)
             )
-        )
-
+            log.info("Displaying Grouped CPU Memory Usage")
+            log.info(
+                prof.key_averages(group_by_stack_n=5).table(
+                    sort_by="self_cpu_memory_usage", row_limit=5
+                )
+            )
+    except RuntimeError as e:
+        INFERENCE_MODE_EXCEPTION.raise_if_triggered(e)
 
 @cli.command()
 @click.option("--model_file", help="Path to model file")

@@ -112,7 +112,7 @@ def save_neutone_model(
 
     sqw = SampleQueueWrapper(model)
 
-    with tr.no_grad():
+    with tr.inference_mode():
         log.info("Converting model to torchscript...")
         script = model_to_torchscript(sqw, freeze=freeze, optimize=optimize)
 
@@ -131,8 +131,8 @@ def save_neutone_model(
         with open(root_dir / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=4)
 
-        log.info("Running model on audio samples...")
         if audio_sample_pairs is None:
+            log.info("Running model on default audio samples...")
             input_samples = get_default_audio_samples()
             audio_sample_pairs = []
             for input_sample in input_samples:
