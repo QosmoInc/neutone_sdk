@@ -63,6 +63,7 @@ SCHEMA = {
         },
         "neutone_parameters": {
             "type": "object",
+            # TODO(cm): make this an OR statement
             "required": ["p1", "p2", "p3", "p4"],
             "properties": {
                 "p1": {"$ref": "#/definitions/neutoneParameter"},

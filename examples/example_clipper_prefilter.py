@@ -6,9 +6,9 @@ import torch as tr
 import torch.nn as nn
 from torch import Tensor
 
-from neutone_sdk import WaveformToWaveformBase, NeutoneParameter
+from neutone_sdk import WaveformToWaveformBase, NeutoneParameter, KnobNeutoneParameter
+from neutone_sdk.filters import FIRFilter, FilterType
 from neutone_sdk.utils import save_neutone_model
-from neutone_sdk.filters import FIRFilter, IIRFilter, FilterType
 
 """
 Example wrapper script for prefilter + models with variable sample rate.
@@ -65,9 +65,9 @@ class ClipperModelWrapper(WaveformToWaveformBase):
 
     def get_neutone_parameters(self) -> List[NeutoneParameter]:
         return [
-            NeutoneParameter("min", "min clip threshold", default_value=0.15),
-            NeutoneParameter("max", "max clip threshold", default_value=0.15),
-            NeutoneParameter("gain", "scale clip threshold", default_value=1.0),
+            KnobNeutoneParameter("min", "min clip threshold", default_value=0.15),
+            KnobNeutoneParameter("max", "max clip threshold", default_value=0.15),
+            KnobNeutoneParameter("gain", "scale clip threshold", default_value=1.0),
         ]
 
     @tr.jit.export

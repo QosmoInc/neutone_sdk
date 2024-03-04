@@ -1,12 +1,16 @@
 import logging
-import time
 from abc import abstractmethod
-from typing import NamedTuple, Dict, List, Optional
+from typing import NamedTuple, Dict, List, Optional, Tuple, Union
 
 import torch as tr
 from torch import Tensor, nn
 
-from neutone_sdk import NeutoneModel
+from neutone_sdk import (
+    NeutoneModel,
+    constants,
+    NeutoneParameterType,
+    KnobNeutoneParameter,
+)
 from neutone_sdk.queues import CircularInplaceTensorQueue
 from neutone_sdk.utils import validate_waveform
 
@@ -45,7 +49,7 @@ class WaveformToWaveformBase(NeutoneModel):
     def __init__(self, model: nn.Module, use_debug_mode: bool = True) -> None:
         super().__init__(model, use_debug_mode)
         self.in_n_ch = 1 if self.is_input_mono() else 2
-        # These initializations are all temporary for TorchScript typing, otherwise they would be None
+        # These inits are all temp for TorchScript typing, otherwise they would be None
         # These variables are only used if get_look_behind_samples() is greater than 0
         self.curr_bs = -1
         self.in_queue = CircularInplaceTensorQueue(self.in_n_ch, 1)
@@ -53,6 +57,56 @@ class WaveformToWaveformBase(NeutoneModel):
         self.model_in_buffer = tr.zeros((self.in_n_ch, 1))
         self.params_buffer = tr.zeros((self.MAX_N_PARAMS, 1))
         self.agg_params = tr.zeros((self.MAX_N_PARAMS, 1))
+
+        assert all(
+            p.type == NeutoneParameterType.KNOB for p in self.get_neutone_parameters()
+        ), "Only knob type parameters are supported in WaveformToWaveformBase models."
+
+        # For compatibility with the current plugin, we fill in missing params
+        # TODO(cm): remove once plugin metadata parsing is implemented
+        for idx in range(self.n_neutone_parameters, self.MAX_N_PARAMS):
+            tmp_p = KnobNeutoneParameter(
+                name="",
+                description="",
+                default_value=0.0,
+                used=False,
+            )
+            self.neutone_parameters_metadata[f"p{idx + 1}"] = tmp_p.to_metadata_dict()
+            self.neutone_parameter_names.append(tmp_p.name)
+            self.neutone_parameter_descriptions.append(tmp_p.description)
+            self.neutone_parameter_types.append(tmp_p.type.value)
+            self.neutone_parameter_used.append(tmp_p.used)
+
+    def _get_max_n_params(self) -> int:
+        """
+        Sets the maximum number of parameters that the model can have.
+        This should not be overwritten by SDK users.
+        """
+        return constants.MAX_N_PARAMS
+
+    def _get_numerical_default_param_values(
+        self,
+    ) -> List[Tuple[str, Union[float, int]]]:
+        """
+        Returns a list of tuples containing the name and default value of each
+        numerical (float or int) parameter.
+        For WaveformToWaveform models, there are always self.MAX_N_PARAMS number of
+        numerical default parameter values, no matter how many parameters have been
+        defined. This is to prevent empty tensors in some of the internal piping
+        and queues when the model has no parameters.
+        This should not be overwritten by SDK users.
+        """
+        result = []
+        for p in self.get_neutone_parameters():
+            result.append((p.name, p.default_value))
+        if len(result) < self.MAX_N_PARAMS:
+            result.extend(
+                [
+                    (f"p{idx + 1}", 0.0)
+                    for idx in range(len(result), self.MAX_N_PARAMS)
+                ]
+            )
+        return result
 
     @abstractmethod
     def is_input_mono(self) -> bool:
@@ -193,7 +247,8 @@ class WaveformToWaveformBase(NeutoneModel):
         if params is None:
             # The default params come in as one value by default but for compatibility
             # with the plugin inputs we repeat them for the size of the buffer.
-            # This allocates memory but should never happen in the VST since it always passes parameters
+            # This allocates memory but should never happen in the VST since it always
+            # passes parameters
             params = self.get_default_param_values().repeat(1, in_n)
 
         if self.use_debug_mode:
@@ -232,8 +287,9 @@ class WaveformToWaveformBase(NeutoneModel):
         if self.use_debug_mode:
             assert params.ndim == 2
             assert params.size(0) == self.MAX_N_PARAMS
-        for idx, neutone_param in enumerate(self.get_neutone_parameters()):
-            self.remapped_params[neutone_param.name] = params[idx]
+
+        for idx in range(self.n_neutone_parameters):
+            self.remapped_params[self.neutone_parameter_names[idx]] = params[idx]
 
         x = self.do_forward_pass(x, self.remapped_params)
 

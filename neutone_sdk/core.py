@@ -2,7 +2,7 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from typing import NamedTuple, Dict, List
+from typing import NamedTuple, Dict, List, Tuple, Union
 
 import torch as tr
 from torch import nn, Tensor
@@ -37,53 +37,94 @@ class CoreMetadata(NamedTuple):
 
 
 class NeutoneModel(ABC, nn.Module):
+    # TorchScript typing does not support instance attributes, so we need to type them
+    # as class attributes. This is required for supporting models with no parameters.
+    # (https://github.com/pytorch/pytorch/issues/51041#issuecomment-767061194)
+    neutone_parameters_metadata: Dict[str, Dict[str, str]]
+    remapped_params: Dict[str, Tensor]
+    neutone_parameter_names: List[str]
+    # TODO(cm): remove from here once plugin metadata parsing is implemented
+    neutone_parameter_descriptions: List[str]
+    neutone_parameter_used: List[bool]
+    neutone_parameter_types: List[str]
+
     def __init__(self, model: nn.Module, use_debug_mode: bool = True) -> None:
         """
         Creates an Neutone model, wrapping a child model (that does the real
         work).
         """
         super().__init__()
-        self.MAX_N_PARAMS = constants.MAX_N_PARAMS
+        self.MAX_N_PARAMS = self._get_max_n_params()
         self.SDK_VERSION = constants.SDK_VERSION
         self.CURRENT_TIME = time.time()
         self.use_debug_mode = use_debug_mode
+        self.n_neutone_parameters = len(self.get_neutone_parameters())
 
-        assert len(self.get_neutone_parameters()) <= self.MAX_N_PARAMS
+        # Ensure the number of parameters is within the allowed limit
+        assert self.n_neutone_parameters <= self.MAX_N_PARAMS, (
+            f"Number of parameters ({self.n_neutone_parameters}) exceeds the maximum "
+            f"allowed ({self.MAX_N_PARAMS})."
+        )
         # Ensure parameter names are unique
         assert len(set([p.name for p in self.get_neutone_parameters()])) == len(
             self.get_neutone_parameters()
         )
+
+        # Save parameter metadata
+        self.neutone_parameters_metadata = {
+            f"p{idx + 1}": p.to_metadata_dict()
+            for idx, p in enumerate(self.get_neutone_parameters())
+        }
+
+        # Allocate default params buffer to prevent dynamic allocations later
+        numerical_default_param_vals = self._get_numerical_default_param_values()
+        default_param_values_t = tr.tensor([v for _, v in numerical_default_param_vals])
+        assert default_param_values_t.size(0) <= self.MAX_N_PARAMS, (
+            f"Number of default parameter values ({default_param_values_t.size(0)}) "
+            f"exceeds the maximum allowed ({self.MAX_N_PARAMS})."
+        )
+        default_param_values = default_param_values_t.unsqueeze(-1)
+        self.register_buffer("default_param_values", default_param_values)
+
+        # Allocate remapped params dictionary to prevent dynamic allocations later
+        self.remapped_params = {
+            name: tr.tensor([val])
+            for name, val in numerical_default_param_vals
+        }
+
+        # Save parameter information
+        self.neutone_parameter_names = [p.name for p in self.get_neutone_parameters()]
+        # TODO(cm): remove from here once plugin metadata parsing is implemented
+        self.neutone_parameter_descriptions = [
+            p.description for p in self.get_neutone_parameters()
+        ]
+        self.neutone_parameter_used = [p.used for p in self.get_neutone_parameters()]
+        self.neutone_parameter_types = [
+            p.type.value for p in self.get_neutone_parameters()
+        ]
+
+        # Save and prepare model
         model.eval()
         self.model = model
 
-        # Convert neutone_parameters to metadata format
-        neutone_parameters = self.get_neutone_parameters()
-        if len(neutone_parameters) < self.MAX_N_PARAMS:
-            neutone_parameters += [
-                NeutoneParameter(
-                    name="",
-                    description="",
-                    used=False,
-                    default_value=0.0,
-                )
-            ] * (self.MAX_N_PARAMS - len(neutone_parameters))
-        self.neutone_parameters_metadata = {
-            f"p{idx + 1}": neutone_parameter.to_metadata_dict()
-            for idx, neutone_parameter in enumerate(neutone_parameters)
-        }
-        default_param_values = tr.tensor(
-            [
-                neutone_parameter.default_value
-                for neutone_parameter in neutone_parameters
-            ]
-        ).unsqueeze(-1)
-        self.register_buffer("default_param_values", default_param_values)
-        self.remapped_params = {
-            neutone_param.name: default_param_values[idx]
-            for idx, neutone_param in enumerate(self.get_neutone_parameters())
-        }
-        # This is required for TorchScript typing when there are no Neutone parameters defined
-        self.remapped_params["__torchscript_typing"] = default_param_values[0]
+    @abstractmethod
+    def _get_max_n_params(self) -> int:
+        """
+        Sets the maximum number of parameters that the model can have.
+        This should not be overwritten by SDK users.
+        """
+        pass
+
+    @abstractmethod
+    def _get_numerical_default_param_values(
+        self,
+    ) -> List[Tuple[str, Union[float, int]]]:
+        """
+        Returns a list of tuples containing the name and default value of each
+        numerical (float or int) parameter.
+        This should not be overwritten by SDK users.
+        """
+        pass
 
     @abstractmethod
     def get_model_name(self) -> str:
@@ -223,24 +264,40 @@ class NeutoneModel(ABC, nn.Module):
         self.eval()
 
     @tr.jit.export
+    def get_neutone_parameters_metadata(self) -> Dict[str, Dict[str, str]]:
+        """
+        Returns the metadata of the parameters as a string dictionary of string
+        dictionaries.
+        """
+        return self.neutone_parameters_metadata
+
+    @tr.jit.export
     def get_default_param_values(self) -> Tensor:
+        """
+        Returns the default parameter values as a tensor of shape
+        (N_DEFAULT_PARAM_VALUES, 1).
+        """
         return self.default_param_values
 
     @tr.jit.export
     def get_default_param_names(self) -> List[str]:
-        return [x.name for x in self.get_neutone_parameters()]
+        # TODO(cm): remove this once plugin metadata parsing is implemented
+        return self.neutone_parameter_names
 
     @tr.jit.export
     def get_default_param_descriptions(self) -> List[str]:
-        return [x.description for x in self.get_neutone_parameters()]
+        # TODO(cm): remove this once plugin metadata parsing is implemented
+        return self.neutone_parameter_descriptions
 
     @tr.jit.export
     def get_default_param_types(self) -> List[str]:
-        return [x.type.value for x in self.get_neutone_parameters()]
+        # TODO(cm): remove this once plugin metadata parsing is implemented
+        return self.neutone_parameter_types
 
     @tr.jit.export
     def get_default_param_used(self) -> List[bool]:
-        return [x.used for x in self.get_neutone_parameters()]
+        # TODO(cm): remove this once plugin metadata parsing is implemented
+        return self.neutone_parameter_used
 
     @tr.jit.export
     def get_wet_default_value(self) -> float:
@@ -264,7 +321,7 @@ class NeutoneModel(ABC, nn.Module):
     def get_core_preserved_attributes(self) -> List[str]:
         return [
             "model",  # nn.Module
-            "default_param_values",  # Registered buffer
+            "get_neutone_parameters_metadata",
             "get_default_param_values",
             "get_default_param_names",
             "get_default_param_descriptions",
@@ -285,7 +342,7 @@ class NeutoneModel(ABC, nn.Module):
             model_authors=self.get_model_authors(),
             model_short_description=self.get_model_short_description(),
             model_long_description=self.get_model_long_description(),
-            neutone_parameters=self.neutone_parameters_metadata,
+            neutone_parameters=self.get_neutone_parameters_metadata(),
             wet_default_value=self.get_wet_default_value(),
             dry_default_value=self.get_dry_default_value(),
             input_gain_default_value=self.get_input_gain_default_value(),

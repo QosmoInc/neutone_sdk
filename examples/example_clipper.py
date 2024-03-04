@@ -8,7 +8,7 @@ import torch as tr
 import torch.nn as nn
 from torch import Tensor
 
-from neutone_sdk import WaveformToWaveformBase, NeutoneParameter
+from neutone_sdk import WaveformToWaveformBase, NeutoneParameter, KnobNeutoneParameter
 from neutone_sdk.utils import save_neutone_model
 
 logging.basicConfig()
@@ -59,9 +59,9 @@ class ClipperModelWrapper(WaveformToWaveformBase):
 
     def get_neutone_parameters(self) -> List[NeutoneParameter]:
         return [
-            NeutoneParameter("min", "min clip threshold", default_value=0.15),
-            NeutoneParameter("max", "max clip threshold", default_value=0.15),
-            NeutoneParameter("gain", "scale clip threshold", default_value=1.0),
+            KnobNeutoneParameter("min", "min clip threshold", default_value=0.15),
+            KnobNeutoneParameter("max", "max clip threshold", default_value=0.15),
+            KnobNeutoneParameter("gain", "scale clip threshold", default_value=1.0),
         ]
 
     @tr.jit.export
