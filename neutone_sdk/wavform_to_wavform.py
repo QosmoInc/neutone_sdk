@@ -9,7 +9,7 @@ from neutone_sdk import (
     NeutoneModel,
     constants,
     NeutoneParameterType,
-    KnobNeutoneParameter,
+    ContinuousNeutoneParameter,
 )
 from neutone_sdk.queues import CircularInplaceTensorQueue
 from neutone_sdk.utils import validate_waveform
@@ -59,23 +59,27 @@ class WaveformToWaveformBase(NeutoneModel):
         self.agg_params = tr.zeros((self.MAX_N_PARAMS, 1))
 
         assert all(
-            p.type == NeutoneParameterType.KNOB for p in self.get_neutone_parameters()
-        ), "Only knob type parameters are supported in WaveformToWaveformBase models."
+            p.type == NeutoneParameterType.CONTINUOUS
+            for p in self.get_neutone_parameters()
+        ), (
+            "Only continuous type parameters are supported in WaveformToWaveformBase "
+            "models."
+        )
 
         # For compatibility with the current plugin, we fill in missing params
         # TODO(cm): remove once plugin metadata parsing is implemented
         for idx in range(self.n_neutone_parameters, self.MAX_N_PARAMS):
-            tmp_p = KnobNeutoneParameter(
+            unused_p = ContinuousNeutoneParameter(
                 name="",
                 description="",
                 default_value=0.0,
                 used=False,
             )
-            self.neutone_parameters_metadata[f"p{idx + 1}"] = tmp_p.to_metadata_dict()
-            self.neutone_parameter_names.append(tmp_p.name)
-            self.neutone_parameter_descriptions.append(tmp_p.description)
-            self.neutone_parameter_types.append(tmp_p.type.value)
-            self.neutone_parameter_used.append(tmp_p.used)
+            self.neutone_parameters_metadata[f"p{idx+1}"] = unused_p.to_metadata_dict()
+            self.neutone_parameter_names.append(unused_p.name)
+            self.neutone_parameter_descriptions.append(unused_p.description)
+            self.neutone_parameter_types.append(unused_p.type.value)
+            self.neutone_parameter_used.append(unused_p.used)
 
     def _get_max_n_params(self) -> int:
         """

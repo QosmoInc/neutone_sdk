@@ -135,7 +135,7 @@ SCHEMA = {
             "properties": {
                 "name": {"type": "string"},
                 "description": {"type": "string"},
-                "type": {"type": "string", "enum": ["knob"]},
+                "type": {"type": "string", "enum": ["continuous"]},
                 "used": {"type": "string", "enum": ["True", "False"]},
                 "default_value": {"type": "string"},
             },

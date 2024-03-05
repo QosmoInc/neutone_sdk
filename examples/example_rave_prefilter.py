@@ -8,7 +8,7 @@ import torch
 import torchaudio
 from torch import Tensor, nn
 
-from neutone_sdk import WaveformToWaveformBase, NeutoneParameter, KnobNeutoneParameter
+from neutone_sdk import WaveformToWaveformBase, NeutoneParameter, ContinuousNeutoneParameter
 from neutone_sdk.audio import (
     AudioSample,
     AudioSamplePair,
@@ -69,20 +69,20 @@ class FilteredRAVEModelWrapper(WaveformToWaveformBase):
 
     def get_neutone_parameters(self) -> List[NeutoneParameter]:
         return [
-            KnobNeutoneParameter(
+            ContinuousNeutoneParameter(
                 name="Chaos", description="Magnitude of latent noise", default_value=0.0
             ),
-            KnobNeutoneParameter(
+            ContinuousNeutoneParameter(
                 name="Z edit index",
                 description="Index of latent dimension to edit",
                 default_value=0.0,
             ),
-            KnobNeutoneParameter(
+            ContinuousNeutoneParameter(
                 name="Z scale",
                 description="Scale of latent variable",
                 default_value=0.5,
             ),
-            KnobNeutoneParameter(
+            ContinuousNeutoneParameter(
                 name="Z offset",
                 description="Offset of latent variable",
                 default_value=0.5,

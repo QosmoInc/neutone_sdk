@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from neutone_sdk import WaveformToWaveformBase, NeutoneParameter, KnobNeutoneParameter
+from neutone_sdk import WaveformToWaveformBase, NeutoneParameter, ContinuousNeutoneParameter
 from neutone_sdk.tcn_1d import FiLM
 from neutone_sdk.utils import save_neutone_model
 
@@ -202,9 +202,9 @@ class OverdriveModelWrapper(WaveformToWaveformBase):
 
     def get_neutone_parameters(self) -> List[NeutoneParameter]:
         return [
-            KnobNeutoneParameter("depth", "Effect Depth", 0.0),
-            KnobNeutoneParameter("P1", "Feature modulation 1", 0.0),
-            KnobNeutoneParameter("P2", "Feature modulation 2", 0.0),
+            ContinuousNeutoneParameter("depth", "Effect Depth", 0.0),
+            ContinuousNeutoneParameter("P1", "Feature modulation 1", 0.0),
+            ContinuousNeutoneParameter("P2", "Feature modulation 2", 0.0),
         ]
 
     @torch.jit.export

@@ -8,7 +8,7 @@ import torch as tr
 import torch.nn as nn
 from torch import Tensor
 
-from neutone_sdk import WaveformToWaveformBase, NeutoneParameter, KnobNeutoneParameter
+from neutone_sdk import WaveformToWaveformBase, NeutoneParameter, ContinuousNeutoneParameter
 from neutone_sdk.realtime_stft import RealtimeSTFT
 from neutone_sdk.utils import save_neutone_model
 
@@ -171,11 +171,11 @@ class SpectralFilterWrapper(WaveformToWaveformBase):
 
     def get_neutone_parameters(self) -> List[NeutoneParameter]:
         return [
-            KnobNeutoneParameter(
+            ContinuousNeutoneParameter(
                 "center", "center frequency of the filter", default_value=0.3
             ),
-            KnobNeutoneParameter("width", "width of the filter", default_value=0.5),
-            KnobNeutoneParameter(
+            ContinuousNeutoneParameter("width", "width of the filter", default_value=0.5),
+            ContinuousNeutoneParameter(
                 "amount", "spectral attenuation amount", default_value=0.9
             ),
         ]
