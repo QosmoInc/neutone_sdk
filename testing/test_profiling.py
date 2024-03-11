@@ -5,18 +5,13 @@ from typing import Dict, List
 import torch as tr
 import torch.nn as nn
 from torch import Tensor
-from torch._C._autograd import ProfilerActivity
-from torch.autograd.profiler import record_function
-from torch.profiler import profile
-from tqdm import tqdm
 
 from neutone_sdk import (
     WaveformToWaveformBase,
     NeutoneParameter,
     SampleQueueWrapper,
-    constants,
 )
-from neutone_sdk.utils import model_to_torchscript
+from neutone_sdk.benchmark import profile_sqw
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
@@ -101,53 +96,8 @@ class ProfilingModelWrapper(WaveformToWaveformBase):
         return x
 
 
-def profile_sqw(
-    sqw: SampleQueueWrapper,
-    daw_sr: int = 48000,
-    daw_bs: int = 512,
-    daw_is_mono: bool = False,
-    use_params: bool = True,
-    convert_to_torchscript: bool = False,
-    n_iters: int = 100,
-) -> None:
-    daw_n_ch = 1 if daw_is_mono else 2
-    audio_buffers = [tr.rand((daw_n_ch, daw_bs)) for _ in range(n_iters)]
-    if use_params:
-        param_buffers = [
-            tr.rand((constants.MAX_N_PARAMS, daw_bs)) for _ in range(n_iters)
-        ]
-    else:
-        param_buffers = [None for _ in range(n_iters)]
-
-    sqw.set_daw_sample_rate_and_buffer_size(daw_sr, daw_bs)
-    sqw.prepare_for_inference()
-    if convert_to_torchscript:
-        log.info("Converting to TorchScript")
-        with tr.no_grad():
-            sqw = model_to_torchscript(sqw, freeze=False, optimize=False)
-
-    with profile(
-        activities=[ProfilerActivity.CPU],
-        with_stack=True,
-        profile_memory=True,
-        record_shapes=False,
-    ) as prof:
-        with record_function("forward"):
-            for audio_buff, param_buff in tqdm(zip(audio_buffers, param_buffers)):
-                out_buff = sqw.forward(audio_buff, param_buff)
-
-    print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-    # print(prof.key_averages(group_by_stack_n=5).table(sort_by="cpu_time_total", row_limit=10))
-    print(prof.key_averages().table(sort_by="self_cpu_memory_usage", row_limit=10))
-    print(
-        prof.key_averages(group_by_stack_n=5).table(
-            sort_by="self_cpu_memory_usage", row_limit=5
-        )
-    )
-
-
 if __name__ == "__main__":
     model = ProfilingModel()
     wrapper = ProfilingModelWrapper(model)
     sqw = SampleQueueWrapper(wrapper)
-    profile_sqw(sqw)
+    profile_sqw(sqw, daw_sr=48000, n_iters=100, convert_to_torchscript=True)

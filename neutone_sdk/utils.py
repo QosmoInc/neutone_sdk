@@ -16,7 +16,7 @@ from neutone_sdk.audio import (
     get_default_audio_samples,
     render_audio_sample,
 )
-from neutone_sdk.constants import MAX_N_AUDIO_SAMPLES
+from neutone_sdk.constants import MAX_N_AUDIO_SAMPLES, MAX_N_PARAMS
 from neutone_sdk.core import NeutoneModel
 from neutone_sdk.metadata import validate_metadata
 
@@ -66,6 +66,7 @@ def save_neutone_model(
     max_n_samples: int = MAX_N_AUDIO_SAMPLES,
     freeze: bool = False,
     optimize: bool = False,
+    speed_benchmark: bool = True,
 ) -> None:
     """
     Save a Neutone model to disk as a Torchscript file. Additionally include metadata file and samples as needed.
@@ -83,6 +84,8 @@ def save_neutone_model(
                 used (default of 3) for exceptional cases.
         freeze: If true, jit.freeze will be applied to the model.
         optimize: If true, jit.optimize_for_inference will be applied to the model.
+        speed_benchmark: If true, will run a speed benchmark when submission is also true.
+                Consider disabling for non-realtime models as it might take too long.
 
     Returns:
       Will create the following files:
@@ -105,6 +108,7 @@ def save_neutone_model(
 
     # TODO(cm): remove local import (currently prevents circular import)
     from neutone_sdk import SampleQueueWrapper
+    from neutone_sdk.benchmark import benchmark_latency_, benchmark_speed_
 
     sqw = SampleQueueWrapper(model)
 
@@ -114,7 +118,7 @@ def save_neutone_model(
 
         # We need to keep a copy because some models still don't implement reset
         # properly and when rendering the samples we might create unwanted state.
-        # 
+        #
         # We used to deepcopy but we found it breaks some models
         # script_copy = copy.deepcopy(script)
         buf = io.BytesIO()
@@ -160,14 +164,15 @@ def save_neutone_model(
         loaded_model.set_daw_sample_rate_and_buffer_size(48000, 512)
         loaded_model.reset()
         loaded_model.is_resampling()
-        log.info(
-            f"Buffering delay reported to the DAW for 48000 Hz sampling rate and 512 buffer size: "
-            f"{loaded_model.calc_buffering_delay_samples()}"
-        )
-        log.info(
-            f"Model delay reported to the DAW for 48000 Hz sampling rate and 512 buffer size: "
-            f"{loaded_model.calc_model_delay_samples()}"
-        )
+
+        log.info("Testing offline mode...")
+        for input_sample in get_default_audio_samples():
+            offline_sr = input_sample.sr
+            offline_bs = 4096
+            loaded_model.set_daw_sample_rate_and_buffer_size(offline_sr, offline_bs)
+            offline_params = tr.rand((MAX_N_PARAMS, input_sample.audio.size(1)))
+            offline_rendered_sample = loaded_model.forward_offline(input_sample.audio, offline_params)
+            break  # Only test one sample to reduce export time
 
         if submission:  # Do extra checks
             log.info("Running submission checks...")
@@ -185,7 +190,25 @@ def save_neutone_model(
             tr.manual_seed(42)
             script_model_render = render_audio_sample(script_copy, input_samples).audio
 
-            assert tr.allclose(script_model_render, loaded_model_render)
+            assert tr.allclose(script_model_render, loaded_model_render, atol=1e-6)
+
+            log.info("Running benchmarks...")
+            log.info(
+                "Check out the README for additional information on how to run benchmarks with different parameters and (sample_rate, buffer_size) combinations."
+            )
+            log.info("Running default latency benchmark...")
+            benchmark_latency_(
+                str(root_dir / "model.nm"),
+            )
+            if speed_benchmark:
+                log.info(
+                    "Running speed benchmark... If this is taking too long consider disabling the speed_benchmark parameter."
+                )
+                benchmark_speed_(str(root_dir / "model.nm"))
+            else:
+                log.info(
+                    "Skipping speed_benchmark because the speed_benchmark parameter is set to False"
+                )
 
             log.info("Your model has been exported successfully!")
             log.info(

@@ -103,7 +103,7 @@ class FilteredRAVEModelWrapper(WaveformToWaveformBase):
 
     def calc_model_delay_samples(self) -> int:
         # model latency should also be added if non-causal
-        return self.pre_filter.delay
+        return self.pre_filter.delay + 2048
 
     def set_model_sample_rate_and_buffer_size(
         self, sample_rate: int, n_samples: int
@@ -115,7 +115,6 @@ class FilteredRAVEModelWrapper(WaveformToWaveformBase):
     def get_citation(self) -> str:
         return """Caillon, A., & Esling, P. (2021). RAVE: A variational autoencoder for fast and high-quality neural audio synthesis. arXiv preprint arXiv:2111.05011."""
 
-    @torch.no_grad()
     def do_forward_pass(self, x: Tensor, params: Dict[str, Tensor]) -> Tensor:
         # Apply pre-filter
         x = self.pre_filter(x)

@@ -149,80 +149,83 @@ def render_audio_sample(
             or [model.MAX_N_PARAMS, input_sample.audio.size(1)] 2d tensor of parameter values for every input audio sample
     """
 
-    model.use_debug_mode = (
-        True  # Turn on debug mode to catch common mistakes when rendering sample audio
-    )
+    with tr.no_grad():
+        model.use_debug_mode = True  # Turn on debug mode to catch common mistakes when rendering sample audio
 
-    preferred_sr = neutone_sdk.SampleQueueWrapper.select_best_model_sr(
-        input_sample.sr, model.get_native_sample_rates()
-    )
-    if len(model.get_native_buffer_sizes()) > 0:
-        buffer_size = model.get_native_buffer_sizes()[0]
-    else:
-        buffer_size = 512
-
-    audio = input_sample.audio
-    if input_sample.sr != preferred_sr:
-        audio = torchaudio.transforms.Resample(input_sample.sr, preferred_sr)(audio)
-
-    if model.is_input_mono() and not input_sample.is_mono():
-        audio = tr.mean(audio, dim=0, keepdim=True)
-    elif not model.is_input_mono() and input_sample.is_mono():
-        audio = audio.repeat(2, 1)
-
-    audio_len = audio.size(1)
-    padding_amount = math.ceil(audio_len / buffer_size) * buffer_size - audio_len
-    padded_audio = nn.functional.pad(audio, [0, padding_amount])
-    audio_chunks = padded_audio.split(buffer_size, dim=1)
-
-    model.set_daw_sample_rate_and_buffer_size(
-        preferred_sr, buffer_size, preferred_sr, buffer_size
-    )
-
-    # make sure the shape of params is compatible with the model calls.
-    if params is not None:
-        assert params.shape[0] == model.MAX_N_PARAMS
-
-        # if constant values, copy across audio dimension
-        if params.dim() == 1:
-            params = params.repeat([audio_len, 1]).T
-
-        # otherwise resample to match audio
+        preferred_sr = neutone_sdk.SampleQueueWrapper.select_best_model_sr(
+            input_sample.sr, model.get_native_sample_rates()
+        )
+        if len(model.get_native_buffer_sizes()) > 0:
+            buffer_size = model.get_native_buffer_sizes()[0]
         else:
-            assert params.shape == (model.MAX_N_PARAMS, input_sample.audio.size(1))
-            params = torchaudio.transforms.Resample(input_sample.sr, preferred_sr)(
-                params
+            buffer_size = 512
+
+        audio = input_sample.audio
+        if input_sample.sr != preferred_sr:
+            audio = torchaudio.transforms.Resample(input_sample.sr, preferred_sr)(audio)
+
+        if model.is_input_mono() and not input_sample.is_mono():
+            audio = tr.mean(audio, dim=0, keepdim=True)
+        elif not model.is_input_mono() and input_sample.is_mono():
+            audio = audio.repeat(2, 1)
+
+        audio_len = audio.size(1)
+        padding_amount = math.ceil(audio_len / buffer_size) * buffer_size - audio_len
+        padded_audio = nn.functional.pad(audio, [0, padding_amount])
+        audio_chunks = padded_audio.split(buffer_size, dim=1)
+
+        model.set_daw_sample_rate_and_buffer_size(
+            preferred_sr, buffer_size, preferred_sr, buffer_size
+        )
+
+        # make sure the shape of params is compatible with the model calls.
+        if params is not None:
+            assert params.shape[0] == model.MAX_N_PARAMS
+
+            # if constant values, copy across audio dimension
+            if params.dim() == 1:
+                params = params.repeat([audio_len, 1]).T
+
+            # otherwise resample to match audio
+            else:
+                assert params.shape == (model.MAX_N_PARAMS, input_sample.audio.size(1))
+                params = torchaudio.transforms.Resample(input_sample.sr, preferred_sr)(
+                    params
+                )
+                params = tr.clamp(params, 0, 1)
+
+            # padding and chunking parameters to match audio
+            padded_params = nn.functional.pad(
+                params, [0, padding_amount], mode="replicate"
             )
-            params = tr.clamp(params, 0, 1)
+            param_chunks = padded_params.split(buffer_size, dim=1)
 
-        # padding and chunking parameters to match audio
-        padded_params = nn.functional.pad(params, [0, padding_amount], mode="replicate")
-        param_chunks = padded_params.split(buffer_size, dim=1)
+            out_chunks = [
+                model.forward(audio_chunk, param_chunk).clone()
+                for audio_chunk, param_chunk in tqdm(
+                    zip(audio_chunks, param_chunks), total=len(audio_chunks)
+                )
+            ]
 
-        out_chunks = [
-            model.forward(audio_chunk, param_chunk).clone()
-            for audio_chunk, param_chunk in tqdm(
-                zip(audio_chunks, param_chunks), total=len(audio_chunks)
+        else:
+            out_chunks = [
+                model.forward(audio_chunk, None).clone()
+                for audio_chunk in tqdm(audio_chunks)
+            ]
+
+        audio_out = tr.hstack(out_chunks)[:, :audio_len]
+
+        model.reset()
+
+        if preferred_sr != output_sr:
+            audio_out = torchaudio.transforms.Resample(preferred_sr, output_sr)(
+                audio_out
             )
-        ]
 
-    else:
-        out_chunks = [
-            model.forward(audio_chunk, None).clone()
-            for audio_chunk in tqdm(audio_chunks)
-        ]
+        # Make the output audio consistent with the input audio
+        if audio_out.size(0) == 1 and not input_sample.is_mono():
+            audio_out = audio_out.repeat(2, 1)
+        elif audio_out.size(0) == 2 and input_sample.is_mono():
+            audio_out = tr.mean(audio_out, dim=0, keepdim=True)
 
-    audio_out = tr.hstack(out_chunks)[:, :audio_len]
-
-    model.reset()
-
-    if preferred_sr != output_sr:
-        audio_out = torchaudio.transforms.Resample(preferred_sr, output_sr)(audio_out)
-
-    # Make the output audio consistent with the input audio
-    if audio_out.size(0) == 1 and not input_sample.is_mono():
-        audio_out = audio_out.repeat(2, 1)
-    elif audio_out.size(0) == 2 and input_sample.is_mono():
-        audio_out = tr.mean(audio_out, dim=0, keepdim=True)
-
-    return AudioSample(audio_out, output_sr)
+        return AudioSample(audio_out, output_sr)

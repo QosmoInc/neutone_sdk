@@ -78,6 +78,10 @@ class ClipperModelWrapper(WaveformToWaveformBase):
     def is_output_mono(self) -> bool:
         return False
 
+    def calc_model_delay_samples(self) -> int:
+        # model latency should also be added if non-causal
+        return self.pre_filter.delay
+
     def set_model_sample_rate_and_buffer_size(
         self, sample_rate: int, n_samples: int
     ) -> bool:

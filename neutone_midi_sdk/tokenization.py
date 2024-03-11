@@ -31,6 +31,9 @@ def convert_midi_to_tokens(midi_data: torch.Tensor,
 
     elif token_type == "HVO":
         return convert_midi_to_hvo(midi_data)
+    
+    elif token_type == "HVO_taps":
+        return convert_midi_to_monophonic_hvo(midi_data)
 
     else:
         # Todo: Needs tensor return type; how to assert this?
@@ -420,7 +423,7 @@ def convert_remi_tokens_to_midi(tokens: torch.Tensor,
 
 
 def convert_midi_to_hvo(midi_data: torch.Tensor) -> torch.Tensor:
-    # Determine total number of 2-bar patterns as determined by the highest time value in midi_data tensor
+    # Determine total number of 2-bar patterns based on the highest time value in midi_data tensor
     mask = (midi_data[:, 0] == 0.0)
     num_patterns = int(torch.max(midi_data[mask, 3]) / 8) + 1
     hvo_tensor = torch.zeros((num_patterns, 32, 27))
@@ -433,11 +436,36 @@ def convert_midi_to_hvo(midi_data: torch.Tensor) -> torch.Tensor:
             velocity = float(message[2].item() / 127.0)
 
             # Check if the velocity is higher than previous input on this timestep
+            # TODO: why is this indexed at 2, 11, 20?
+            # TODO: is this checking the previous input on this timestep?
             if velocity > float(hvo_tensor[pattern, hit_location, 11].item()):
                 offset = (time - (hit_location * 0.25)) / 0.125
                 hvo_tensor[pattern, hit_location, 2] = 1.0
                 hvo_tensor[pattern, hit_location, 11] = velocity
                 hvo_tensor[pattern, hit_location, 20] = offset
+
+    return hvo_tensor
+
+def convert_midi_to_monophonic_hvo(midi_data: torch.Tensor) -> torch.Tensor:
+    # Determine total number of 2-bar patterns as determined by the highest time value in midi_data tensor
+    mask = (midi_data[:, 0] == 0.0)
+    num_patterns = int(torch.max(midi_data[mask, 3]) / 8) + 1
+    hvo_tensor = torch.zeros((num_patterns, 32, 3))
+
+    for idx, message in enumerate(midi_data):
+        if float(message[0].item()) == 0:
+            time = float(message[3].item())
+            hit_location = int(round(time / 0.25) % 32)
+            pattern = int(time / 8)
+            velocity = float(message[2].item() / 127.0)
+
+            # Check if the velocity is higher than previous input on this timestep
+            # TODO: Do we need a check here?
+            # if velocity > float(hvo_tensor[pattern, hit_location - 1, 1].item()):
+            offset = (time - (hit_location * 0.25)) / 0.125
+            hvo_tensor[pattern, hit_location, 0] = 1.0
+            hvo_tensor[pattern, hit_location, 1] = velocity
+            hvo_tensor[pattern, hit_location, 2] = offset
 
     return hvo_tensor
 

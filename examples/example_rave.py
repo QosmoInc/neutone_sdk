@@ -95,7 +95,9 @@ class RAVEModelWrapper(WaveformToWaveformBase):
     def get_citation(self) -> str:
         return """Caillon, A., & Esling, P. (2021). RAVE: A variational autoencoder for fast and high-quality neural audio synthesis. arXiv preprint arXiv:2111.05011."""
 
-    @torch.no_grad()
+    def calc_model_delay_samples(self) -> int:
+        return 2048
+
     def do_forward_pass(self, x: Tensor, params: Dict[str, Tensor]) -> Tensor:
         # parameters edit the latent variable
         z = self.model.encode(x.unsqueeze(1))

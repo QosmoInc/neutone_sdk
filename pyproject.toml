@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "neutone_sdk"
-version = "1.3.0"
+version = "1.4.3"
 description = "SDK for wrapping deep learning models for usage in the Neutone plugin"
 readme = "README.md"
 authors = ["Qosmo <contact@qosmo.jp>"]
@@ -10,10 +10,11 @@ packages = [{include = "neutone_sdk"}]
 
 
 [tool.poetry.dependencies]
+click = ">=8.1.7,<9.0.0"
 python = "^3.7"
 numpy = "^1.21.6"
-torch = ">=1.11.0,<2.0.0"
-torchaudio = ">=0.11.0,<2.0.0"
+torch = ">=1.11.0,<2.2.0"
+torchaudio = ">=0.11.0,<2.2.0"
 soundfile = ">=0.12.1"
 jsonschema = "^4.4.0"
 requests = "^2.27.1"
@@ -24,5 +25,5 @@ black = "22.3.0"
 pytest = "*"
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires = ["poetry-core>=1.1.0"]
 build-backend = "poetry.core.masonry.api"

@@ -24,8 +24,8 @@ class DelayedPassthroughModel(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         x = tr.cat([self.delay_buf, x], dim=-1)
-        self.delay_buf[:, :] = x[:, -self.delay_n_samples:]
-        x = x[:, :-self.delay_n_samples]
+        self.delay_buf[:, :] = x[:, -self.delay_n_samples :]
+        x = x[:, : -self.delay_n_samples]
         return x
 
 
@@ -104,6 +104,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     root_dir = pathlib.Path(args.output)
 
-    model = DelayedPassthroughModel(delay_n_samples=500)  # Change delay_n_samples to test different scenarios
+    model = DelayedPassthroughModel(
+        delay_n_samples=500
+    )  # Change delay_n_samples to test different scenarios
     wrapper = DelayedPassthroughModelWrapper(model)
     save_neutone_model(wrapper, root_dir, dump_samples=True, submission=True)
